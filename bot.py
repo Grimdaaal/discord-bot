@@ -1,5 +1,6 @@
 import discord
 from discord.ext import commands
+from discord.ui import Button, View, Modal, TextInput
 import random
 import os
 
@@ -8,10 +9,11 @@ intents.message_content = True
 intents.members = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
+# --- Jetons ---
 balances = {}
 
 def get_balance(user_id):
-    return balances.get(user_id, 100)
+    return balances.get(user_id, 100)  # 100 par défaut
 
 def add_balance(user_id, amount):
     balances[user_id] = get_balance(user_id) + amount
@@ -19,6 +21,7 @@ def add_balance(user_id, amount):
 def remove_balance(user_id, amount):
     balances[user_id] = max(0, get_balance(user_id) - amount)
 
+# --- Blackjack ---
 def calculate_hand_value(hand):
     value = 0
     aces = 0
@@ -43,97 +46,94 @@ def create_deck():
 
 blackjack_games = {}
 
-# --- Interface Blackjack avec Buttons ---
-
-class BlackjackView(discord.ui.View):
+# --- Blackjack View avec boutons ---
+class BlackjackView(View):
     def __init__(self, user_id):
-        super().__init__(timeout=300)
+        super().__init__(timeout=120)
         self.user_id = user_id
+        self.has_stood = False
+        self.finished = False
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.user_id:
             await interaction.response.send_message("Ce n'est pas ta partie !", ephemeral=True)
             return False
+        if self.finished:
+            await interaction.response.send_message("La partie est terminée.", ephemeral=True)
+            return False
         return True
 
-    @discord.ui.button(label="Hit", style=discord.ButtonStyle.primary)
-    async def hit_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        game = blackjack_games.get(self.user_id)
-        if not game or game['stand']:
-            await interaction.response.send_message("Partie terminée ou inexistante.", ephemeral=True)
-            return
-        deck = game['deck']
-        player_hand = game['player_hand']
-        player_hand.append(deck.pop())
-        player_value = calculate_hand_value(player_hand)
-
-        embed = interaction.message.embeds[0]
-        embed.set_field_at(0, name="Tes cartes", value=f"{', '.join(player_hand)} (Total: {player_value})", inline=False)
-
-        if player_value > 21:
-            del blackjack_games[self.user_id]
-            embed.title = "💥 Tu as dépassé 21, tu perds 😢."
-            self.stop()
-            for child in self.children:
-                child.disabled = True
-            await interaction.response.edit_message(embed=embed, view=self)
-            return
-        elif player_value == 21:
-            embed.title = "🎯 Blackjack ! Tape sur Stand."
-        else:
-            embed.title = "Blackjack - À toi de jouer."
-
-        await interaction.response.edit_message(embed=embed, view=self)
-
-    @discord.ui.button(label="Stand", style=discord.ButtonStyle.secondary)
-    async def stand_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(label="Hit", style=discord.ButtonStyle.green)
+    async def hit(self, interaction: discord.Interaction, button: Button):
         game = blackjack_games.get(self.user_id)
         if not game:
-            await interaction.response.send_message("Partie inexistante.", ephemeral=True)
+            await interaction.response.edit_message(content="Partie non trouvée.", view=None)
+            self.finished = True
             return
 
-        game['stand'] = True
-        player_hand = game['player_hand']
-        dealer_hand = game['dealer_hand']
-        deck = game['deck']
-        bet = game['bet']
+        if self.has_stood:
+            await interaction.response.send_message("Tu as déjà choisi de rester.", ephemeral=True)
+            return
 
-        player_value = calculate_hand_value(player_hand)
-        dealer_value = calculate_hand_value(dealer_hand)
+        game['player_hand'].append(game['deck'].pop())
+        player_value = calculate_hand_value(game['player_hand'])
+
+        content = f"Tu tires : {game['player_hand'][-1]}\nTes cartes: {', '.join(game['player_hand'])} (Total: {player_value})"
+
+        if player_value > 21:
+            content += "\n💥 Tu as dépassé 21, tu perds 😢."
+            del blackjack_games[self.user_id]
+            self.finished = True
+            self.clear_items()
+        elif player_value == 21:
+            content += "\n🎯 Blackjack ! Clique sur 'Stand' pour finir."
+        else:
+            content += "\nClique sur Hit pour tirer une carte, Stand pour rester."
+
+        await interaction.response.edit_message(content=content, view=self)
+
+    @discord.ui.button(label="Stand", style=discord.ButtonStyle.red)
+    async def stand(self, interaction: discord.Interaction, button: Button):
+        game = blackjack_games.get(self.user_id)
+        if not game:
+            await interaction.response.edit_message(content="Partie non trouvée.", view=None)
+            self.finished = True
+            return
+
+        self.has_stood = True
+        player_value = calculate_hand_value(game['player_hand'])
+        dealer_value = calculate_hand_value(game['dealer_hand'])
 
         while dealer_value < 17:
-            dealer_hand.append(deck.pop())
-            dealer_value = calculate_hand_value(dealer_hand)
+            game['dealer_hand'].append(game['deck'].pop())
+            dealer_value = calculate_hand_value(game['dealer_hand'])
 
-        embed = interaction.message.embeds[0]
-        embed.title = "Fin de la partie Blackjack"
-        embed.set_field_at(0, name="Tes cartes", value=f"{', '.join(player_hand)} (Total: {player_value})", inline=False)
-        embed.set_field_at(1, name="Cartes du dealer", value=f"{', '.join(dealer_hand)} (Total: {dealer_value})", inline=False)
+        content = (
+            f"🃏 Dealer a: {', '.join(game['dealer_hand'])} (Total: {dealer_value})\n"
+            f"👤 Tes cartes: {', '.join(game['player_hand'])} (Total: {player_value})\n"
+        )
 
         if dealer_value > 21 or player_value > dealer_value:
-            gain = bet * 2
+            gain = game['bet'] * 2
             add_balance(self.user_id, gain)
-            embed.description = f"🎉 Tu gagnes {gain} 🪙 !"
+            content += f"🎉 Tu gagnes {gain} 🪙 !"
         elif dealer_value == player_value:
-            add_balance(self.user_id, bet)
-            embed.description = "🤝 Égalité, ta mise est rendue."
+            add_balance(self.user_id, game['bet'])
+            content += "🤝 Égalité, ta mise est rendue."
         else:
-            embed.description = "💔 Le dealer gagne."
+            content += "💔 Le dealer gagne."
 
         del blackjack_games[self.user_id]
+        self.finished = True
+        self.clear_items()
+        await interaction.response.edit_message(content=content, view=None)
 
-        self.stop()
-        for child in self.children:
-            child.disabled = True
-
-        await interaction.response.edit_message(embed=embed, view=self)
-
+# --- Commande Blackjack simplifiée ---
 @bot.command(name='blackjack')
-async def blackjack(ctx, action: str = None, amount: int = None):
+async def blackjack(ctx, amount: int = None):
     user_id = ctx.author.id
-
-    if action is None or action.lower() != 'start' or amount is None or amount <= 0:
-        await ctx.send("Utilisation : `!blackjack start <mise>` (mise > 0)")
+    if amount is None or amount <= 0:
+        await ctx.send("Utilisation : `!blackjack <mise>` avec une mise positive.")
         return
 
     if get_balance(user_id) < amount:
@@ -149,7 +149,6 @@ async def blackjack(ctx, action: str = None, amount: int = None):
         'deck': deck,
         'player_hand': player_hand,
         'dealer_hand': dealer_hand,
-        'stand': False,
         'bet': amount
     }
     remove_balance(user_id, amount)
@@ -157,59 +156,89 @@ async def blackjack(ctx, action: str = None, amount: int = None):
     player_value = calculate_hand_value(player_hand)
     dealer_show = dealer_hand[0]
 
-    embed = discord.Embed(title="Blackjack - À toi de jouer", color=discord.Color.dark_green())
-    embed.add_field(name="Tes cartes", value=f"{', '.join(player_hand)} (Total: {player_value})", inline=False)
-    embed.add_field(name="Carte visible du dealer", value=f"{dealer_show}", inline=False)
-    embed.set_footer(text=f"Mise : {amount} 🪙")
+    content = (
+        f"🎲 Nouvelle partie Blackjack pour {ctx.author.mention} !\n"
+        f"💰 Mise : {amount} 🪙\n"
+        f"Tes cartes: {', '.join(player_hand)} (Total: {player_value})\n"
+        f"Carte visible du dealer: {dealer_show}\n"
+        f"Appuie sur les boutons pour jouer."
+    )
 
     view = BlackjackView(user_id)
-    await ctx.send(f"{ctx.author.mention}", embed=embed, view=view)
+    await ctx.send(content=content, view=view)
 
-# --- Roulette améliorée avec embed (commande classique) ---
+# --- Roulette Modal ---
+class RouletteModal(Modal):
+    def __init__(self):
+        super().__init__(title="Pari Roulette")
+
+        self.mise = TextInput(
+            label="Mise (🪙)",
+            placeholder="Entrez votre mise",
+            min_length=1,
+            max_length=10,
+            style=discord.TextStyle.short
+        )
+        self.pari = TextInput(
+            label="Pari (pair, impair, ou nombre 0-36)",
+            placeholder="Ex: pair, impair, 17",
+            min_length=1,
+            max_length=5,
+            style=discord.TextStyle.short
+        )
+
+        self.add_item(self.mise)
+        self.add_item(self.pari)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        user_id = interaction.user.id
+        try:
+            mise = int(self.mise.value)
+            if mise <= 0:
+                await interaction.response.send_message("La mise doit être positive.", ephemeral=True)
+                return
+        except:
+            await interaction.response.send_message("Mise invalide.", ephemeral=True)
+            return
+
+        pari = self.pari.value.lower()
+        if pari not in ['pair', 'impair'] and not (pari.isdigit() and 0 <= int(pari) <= 36):
+            await interaction.response.send_message("Pari invalide, mets 'pair', 'impair' ou un nombre de 0 à 36.", ephemeral=True)
+            return
+
+        if get_balance(user_id) < mise:
+            await interaction.response.send_message("Tu n'as pas assez de 🪙.", ephemeral=True)
+            return
+
+        remove_balance(user_id, mise)
+        result = random.randint(0, 36)
+        result_parity = 'pair' if result != 0 and result % 2 == 0 else 'impair'
+        msg = f"🎡 La roulette tourne... Résultat : **{result}**\n"
+
+        if pari.isdigit():
+            if int(pari) == result:
+                gain = mise * 3
+                add_balance(user_id, gain)
+                msg += f"🎉 Bravo {interaction.user.mention}, tu as gagné {gain} 🪙 ! (numéro exact)"
+            else:
+                msg += f"💔 Dommage {interaction.user.mention}, tu perds {mise} 🪙."
+        else:
+            if result == 0:
+                msg += f"💔 Le zéro sort, tu perds {mise} 🪙."
+            elif pari == result_parity:
+                gain = mise * 2
+                add_balance(user_id, gain)
+                msg += f"🎉 Bravo {interaction.user.mention}, tu as gagné {gain} 🪙 ! ({pari})"
+            else:
+                msg += f"💔 Dommage {interaction.user.mention}, tu perds {mise} 🪙."
+
+        await interaction.response.send_message(msg)
+
+# --- Commande roulette simplifiée ---
 @bot.command(name='roulette')
-async def roulette(ctx, bet_type: str = None, amount: int = None):
-    user_id = ctx.author.id
-
-    if bet_type is None or amount is None:
-        await ctx.send("Utilisation : `!roulette <pari> <mise>` (pari = 0-36, pair ou impair)")
-        return
-    if get_balance(user_id) < amount:
-        await ctx.send("Tu n'as pas assez de 🪙.")
-        return
-
-    bet_type = bet_type.lower()
-    if bet_type not in ['pair', 'impair'] and (not bet_type.isdigit() or not (0 <= int(bet_type) <= 36)):
-        await ctx.send("Pari invalide.")
-        return
-    if amount <= 0:
-        await ctx.send("Mise invalide.")
-        return
-
-    remove_balance(user_id, amount)
-    result = random.randint(0, 36)
-    result_parity = 'pair' if result != 0 and result % 2 == 0 else 'impair'
-
-    embed = discord.Embed(title="Roulette", color=discord.Color.dark_blue())
-    embed.add_field(name="Résultat", value=f"🎡 **{result}**", inline=False)
-
-    if bet_type.isdigit():
-        if int(bet_type) == result:
-            gain = amount * 3
-            add_balance(user_id, gain)
-            embed.description = f"🎉 Bravo {ctx.author.mention}, tu as gagné {gain} 🪙 ! (numéro exact)"
-        else:
-            embed.description = f"💔 Dommage {ctx.author.mention}, tu perds {amount} 🪙."
-    else:
-        if result == 0:
-            embed.description = f"💔 Le zéro sort, tu perds {amount} 🪙."
-        elif bet_type == result_parity:
-            gain = amount * 2
-            add_balance(user_id, gain)
-            embed.description = f"🎉 Bravo {ctx.author.mention}, tu as gagné {gain} 🪙 ! ({bet_type})"
-        else:
-            embed.description = f"💔 Dommage {ctx.author.mention}, tu perds {amount} 🪙."
-
-    await ctx.send(embed=embed)
+async def roulette(ctx):
+    modal = RouletteModal()
+    await ctx.send_modal(modal)
 
 # --- Commande solde ---
 @bot.command(name="solde")
@@ -230,28 +259,25 @@ async def leaderboard(ctx):
             leaderboard_text += f"{i}. {user.display_name} — {coins} 🪙\n"
     await ctx.send(leaderboard_text)
 
-# --- Commande modérateur pour gérer les jetons ---
-@bot.command(name="jetons")
+# --- Commande pour role Directeur gérer jetons ---
+@bot.command(name='jetons')
 @commands.has_role("𝐃𝐢𝐫𝐞𝐜𝐭𝐞𝐮𝐫")
-async def jetons(ctx, action: str = None, member: discord.Member = None, amount: int = None):
-    if action not in ["add", "remove"]:
-        await ctx.send("Usage: `!jetons <add/remove> @membre <montant>`")
+async def jetons(ctx, member: discord.Member, action: str, amount: int):
+    action = action.lower()
+    if action not in ['ajouter', 'enlever']:
+        await ctx.send("Action invalide : 'ajouter' ou 'enlever' seulement.")
         return
-    if member is None or amount is None or amount <= 0:
-        await ctx.send("Usage: `!jetons <add/remove> @membre <montant>`")
+    if amount <= 0:
+        await ctx.send("Le montant doit être positif.")
         return
 
-    if action == "add":
-        add_balance(member.id, amount)
-        await ctx.send(f"✅ Ajouté {amount} 🪙 à {member.display_name}. Nouveau solde : {get_balance(member.id)} 🪙.")
+    user_id = member.id
+    if action == 'ajouter':
+        add_balance(user_id, amount)
+        await ctx.send(f"{amount} 🪙 ont été ajoutés à {member.display_name}.")
     else:
-        remove_balance(member.id, amount)
-        await ctx.send(f"✅ Retiré {amount} 🪙 de {member.display_name}. Nouveau solde : {get_balance(member.id)} 🪙.")
-
-@jetons.error
-async def jetons_error(ctx, error):
-    if isinstance(error, commands.MissingRole):
-        await ctx.send("❌ Tu dois avoir le rôle **𝐃𝐢𝐫𝐞𝐜𝐭𝐞𝐮𝐫** pour utiliser cette commande.")
+        remove_balance(user_id, amount)
+        await ctx.send(f"{amount} 🪙 ont été enlevés à {member.display_name}.")
 
 # --- Lancer le bot ---
 if __name__ == "__main__":
