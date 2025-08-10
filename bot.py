@@ -2,10 +2,22 @@ import discord
 from discord.ext import commands
 import random
 import os
-from dotenv import load_dotenv
+from flask import Flask
+from threading import Thread
 
-# Charger le fichier .env (utile en local)
-load_dotenv()
+# --- Mini serveur web pour Render (ou autre) ---
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Bot Discord actif !"
+
+def run():
+    app.run(host='0.0.0.0', port=8080)
+
+def keep_alive():
+    t = Thread(target=run)
+    t.start()
 
 # --- Bot Discord setup ---
 intents = discord.Intents.default()
@@ -207,5 +219,6 @@ async def leaderboard(ctx):
 
 # --- Lancer le bot ---
 if __name__ == "__main__":
-    TOKEN = os.getenv('DISCORD_TOKEN')
+    keep_alive()
+    TOKEN = os.getenv('DISCORD_TOKEN')  # Assure-toi d'avoir cette variable d'environnement configurée sur Render
     bot.run(TOKEN)
