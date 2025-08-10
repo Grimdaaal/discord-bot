@@ -221,7 +221,7 @@ async def leaderboard(ctx):
 if __name__ == "__main__":
     keep_alive()
     TOKEN = os.getenv('DISCORD_TOKEN')
-    bot.run(TOKEN) discord
+    bot.run(TOKEN) import discord
 from discord.ext import commands
 import random
 import os
