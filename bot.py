@@ -443,5 +443,5 @@ async def leaderboard(ctx):
 # --- Lancer le bot ---
 if __name__ == "__main__":
     keep_alive()
-    TOKEN = os.getenv('DISCORD_TOKEN')
+    TOKEN = os.getenv('GwTKw0pM5AS8bLuik_0ruZhuezpNgD6v3SBVBA')
     bot.run(TOKEN)
