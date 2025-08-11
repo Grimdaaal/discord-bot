@@ -1,10 +1,63 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord.ui import Button, View
 import random
 import os
+import json
+import requests
+import base64
 from flask import Flask
 from threading import Thread
+
+# --- Sauvegarde GitHub ---
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+GITHUB_REPO = os.getenv("GITHUB_REPO")  # ex: "MonUser/monBotData"
+BALANCE_FILE = "balances.json"
+GITHUB_FILE_PATH = BALANCE_FILE
+
+balances = {}
+needs_save = False  # Flag pour indiquer qu'on doit sauvegarder
+
+def github_get_file():
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{GITHUB_FILE_PATH}"
+    headers = {"Authorization": f"token {GITHUB_TOKEN}"}
+    r = requests.get(url, headers=headers)
+    if r.status_code == 200:
+        data = r.json()
+        content = base64.b64decode(data['content']).decode('utf-8')
+        return json.loads(content)
+    return {}
+
+def github_update_file(content_dict, message="Mise à jour des soldes"):
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{GITHUB_FILE_PATH}"
+    headers = {"Authorization": f"token {GITHUB_TOKEN}"}
+    get_req = requests.get(url, headers=headers)
+    sha = get_req.json().get("sha") if get_req.status_code == 200 else None
+    data = {
+        "message": message,
+        "content": base64.b64encode(json.dumps(content_dict).encode('utf-8')).decode('utf-8'),
+        "sha": sha
+    }
+    r = requests.put(url, headers=headers, json=data)
+    if r.status_code not in (200, 201):
+        print(f"Erreur sauvegarde GitHub: {r.text}")
+    else:
+        print("💾 Sauvegarde GitHub effectuée.")
+
+def load_balances():
+    global balances
+    balances = {int(k): v for k, v in github_get_file().items()}
+
+def mark_for_save():
+    global needs_save
+    needs_save = True
+
+@tasks.loop(minutes=5)
+async def save_task():
+    global needs_save
+    if needs_save:
+        github_update_file(balances, "Update balances")
+        needs_save = False
 
 # --- Keep-alive Webserver pour Render ---
 app = Flask(__name__)
@@ -26,16 +79,16 @@ intents.members = True
 
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-balances = {}
-
 def get_balance(user_id):
     return balances.get(user_id, 100)  # 100 jetons par défaut
 
 def add_balance(user_id, amount):
     balances[user_id] = get_balance(user_id) + amount
+    mark_for_save()
 
 def remove_balance(user_id, amount):
     balances[user_id] = max(0, get_balance(user_id) - amount)
+    mark_for_save()
 
 # Commande Directeur pour ajouter/enlever jetons
 @bot.command(name="jetons")
@@ -165,7 +218,7 @@ class BlackjackView(View):
             add_balance(self.user_id, gain)
             content += f"🎉 Tu gagnes {gain} 🪙 !"
         elif dealer_value == player_value:
-            add_balance(self.user_id, self.bet)  # remise mise
+            add_balance(self.user_id, self.bet)
             content += "🤝 Égalité, ta mise est rendue."
         else:
             content += "💔 Le dealer gagne."
@@ -250,7 +303,9 @@ async def roulette(ctx, amount: int = None):
 
 @bot.event
 async def on_ready():
-    print(f"✅ Connecté en tant que {bot.user} !")
+    load_balances()
+    save_task.start()
+    print(f"✅ Connecté en tant que {bot.user} ! Sauvegarde toutes les 5 minutes.")
 
 if __name__ == "__main__":
     TOKEN = os.getenv("DISCORD_TOKEN")
