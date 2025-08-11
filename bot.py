@@ -3,7 +3,23 @@ from discord.ext import commands
 from discord.ui import Button, View
 import random
 import os
+from flask import Flask
+from threading import Thread
 
+# --- Keep-alive Webserver pour Render ---
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is running"
+
+def run_web():
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
+
+Thread(target=run_web).start()
+
+# --- Discord Bot ---
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
@@ -176,7 +192,7 @@ async def blackjack(ctx, amount: int = None):
     )
     await ctx.send(content=content, view=view)
 
-# Roulette simple : pari pair ou impair x2 la mise si victoire
+# Roulette simple
 class RouletteView(View):
     def __init__(self, ctx, user_id, bet):
         super().__init__(timeout=120)
