@@ -104,9 +104,9 @@ def remove_balance(user_id, amount):
     balances[user_id] = max(0, get_balance(user_id) - amount)
     mark_for_save()
 
-# Commande Directeur pour ajouter/enlever jetons
+# Commande Directeur et Co-Directeur pour ajouter/enlever jetons
 @bot.command(name="jetons")
-@commands.has_role("𝐃𝐢𝐫𝐞𝐜𝐭𝐞𝐮𝐫" "𝐂𝐨-𝐃𝐢𝐫𝐞𝐜𝐭𝐞𝐮𝐫")
+@commands.has_any_role("𝐃𝐢𝐫𝐞𝐜𝐭𝐞𝐮𝐫", "𝐂𝐨-𝐃𝐢𝐫𝐞𝐜𝐭𝐞𝐮𝐫")
 async def jetons(ctx, member: discord.Member, action: str, amount: int):
     action = action.lower()
     if action not in ("ajouter", "enlever"):
@@ -123,8 +123,10 @@ async def jetons(ctx, member: discord.Member, action: str, amount: int):
 
 @jetons.error
 async def jetons_error(ctx, error):
-    if isinstance(error, commands.MissingRole):
-        await ctx.send("Tu dois avoir le rôle 𝐃𝐢𝐫𝐞𝐜𝐭𝐞𝐮𝐫/𝐂𝐨-𝐃𝐢𝐫𝐞𝐜𝐭𝐞𝐮𝐫 pour utiliser cette commande.")
+    if isinstance(error, commands.MissingAnyRole):
+        await ctx.send(
+            "Tu dois avoir le rôle 𝐃𝐢𝐫𝐞𝐜𝐭𝐞𝐮𝐫 ou 𝐂𝐨-𝐃𝐢𝐫𝐞𝐜𝐭𝐞𝐮𝐫 pour utiliser cette commande."
+        )
 
 # Solde
 @bot.command(name="solde")
