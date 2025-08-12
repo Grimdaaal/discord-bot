@@ -144,7 +144,7 @@ async def leaderboard(ctx):
             text += f"{i}. {member.display_name} — {bal} 🪙\n"
     await ctx.send(text)
 
-# Blackjack
+# Blackjack (inchangé)
 def create_deck():
     ranks = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A']
     suits = ['♠', '♥', '♦', '♣']
@@ -259,35 +259,91 @@ async def blackjack(ctx, amount: int = None):
     )
     await ctx.send(content=content, view=view)
 
-# --- Nouvelle commande Roulette ---
+# --- Roulette interactive avec boutons ---
+class RouletteView(View):
+    def __init__(self, ctx, user_id, mise):
+        super().__init__(timeout=60)
+        self.ctx = ctx
+        self.user_id = user_id
+        self.mise = mise
+        self.finished = False
+
+        # Ajout des boutons rouge, noir et numéros 0 à 36
+        self.add_item(Button(label="Rouge", style=discord.ButtonStyle.red, custom_id="rouge"))
+        self.add_item(Button(label="Noir", style=discord.ButtonStyle.gray, custom_id="noir"))
+        # Par souci de place on ajoute les numéros en 3 lignes de boutons (0-11, 12-23, 24-36)
+        for start in [0, 12, 24]:
+            for num in range(start, min(start + 12, 37)):
+                style = discord.ButtonStyle.green if num == 0 else discord.ButtonStyle.secondary
+                self.add_item(Button(label=str(num), style=style, custom_id=f"num_{num}"))
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("Ce n'est pas ta partie !", ephemeral=True)
+            return False
+        if self.finished:
+            await interaction.response.send_message("La partie est terminée.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="Rouge", style=discord.ButtonStyle.red, custom_id="rouge")
+    async def rouge_button(self, interaction: discord.Interaction, button: Button):
+        await self.handle_choice(interaction, "rouge")
+
+    @discord.ui.button(label="Noir", style=discord.ButtonStyle.gray, custom_id="noir")
+    async def noir_button(self, interaction: discord.Interaction, button: Button):
+        await self.handle_choice(interaction, "noir")
+
+    async def on_timeout(self):
+        if not self.finished:
+            self.finished = True
+            try:
+                await self.ctx.send(f"{self.ctx.author.mention} Partie roulette terminée par timeout.")
+            except:
+                pass
+
+    async def handle_choice(self, interaction: discord.Interaction, choix: str):
+        if self.finished:
+            await interaction.response.send_message("La partie est terminée.", ephemeral=True)
+            return
+
+        numero = random.randint(0, 36)
+        couleur = "rouge" if numero != 0 and numero % 2 == 1 else "noir" if numero != 0 else "vert"
+        gain = 0
+
+        if choix == "rouge" or choix == "noir":
+            if choix == couleur:
+                gain = self.mise * 2
+        elif choix.startswith("num_"):
+            choix_num = int(choix.split("_")[1])
+            if choix_num == numero:
+                gain = self.mise * 36
+
+        content = f"🎡 La roulette s'arrête sur **{numero} {couleur}** !\n"
+
+        if gain > 0:
+            add_balance(self.user_id, gain)
+            content += f"🎉 Tu gagnes {gain} 🪙 !"
+        else:
+            content += f"💔 Tu perds ta mise de {self.mise} 🪙."
+
+        self.finished = True
+        self.clear_items()
+        await interaction.response.edit_message(content=content, view=None)
+
 @bot.command(name="roulette")
-async def roulette(ctx, mise: int = None, choix: str = None):
-    if mise is None or choix is None:
-        return await ctx.send("🎡 Utilisation : `!roulette <mise> <rouge|noir|0-36>`")
+async def roulette(ctx, mise: int = None):
+    if mise is None:
+        return await ctx.send("🎡 Utilisation : `!roulette <mise>`")
     if mise < 20000:
         return await ctx.send("❌ La mise minimale est de 20 000 🪙.")
     solde = get_balance(ctx.author.id)
     if mise > solde:
         return await ctx.send("❌ Tu n'as pas assez de 🪙 pour cette mise.")
     remove_balance(ctx.author.id, mise)
-    numero = random.randint(0, 36)
-    couleur = "rouge" if numero != 0 and numero % 2 == 1 else "noir" if numero != 0 else "vert"
-    gain = 0
-    choix = choix.lower()
-    if choix in ["rouge", "noir"]:
-        if choix == couleur:
-            gain = mise * 2
-    elif choix.isdigit() and 0 <= int(choix) <= 36:
-        if int(choix) == numero:
-            gain = mise * 36
-    else:
-        add_balance(ctx.author.id, mise)
-        return await ctx.send("❌ Choix invalide. Utilise `rouge`, `noir` ou un nombre entre 0 et 36.")
-    if gain > 0:
-        add_balance(ctx.author.id, gain)
-        await ctx.send(f"🎡 La roulette s'arrête sur **{numero} {couleur}** !\n🎉 Tu gagnes {gain} 🪙 !")
-    else:
-        await ctx.send(f"🎡 La roulette s'arrête sur **{numero} {couleur}**.\n💔 Tu perds ta mise de {mise} 🪙.")
+
+    view = RouletteView(ctx, ctx.author.id, mise)
+    await ctx.send(f"🎡 Roulette interactive lancée pour {ctx.author.mention} ! Choisis ta couleur ou ton numéro.", view=view)
 
 @bot.event
 async def on_ready():
