@@ -124,9 +124,7 @@ async def jetons(ctx, member: discord.Member, action: str, amount: int):
 @jetons.error
 async def jetons_error(ctx, error):
     if isinstance(error, commands.MissingAnyRole):
-        await ctx.send(
-            "Tu dois avoir le rôle 𝐃𝐢𝐫𝐞𝐜𝐭𝐞𝐮𝐫 ou 𝐂𝐨-𝐃𝐢𝐫𝐞𝐜𝐭𝐞𝐮𝐫 pour utiliser cette commande."
-        )
+        await ctx.send("Tu dois avoir le rôle 𝐃𝐢𝐫𝐞𝐜𝐭𝐞𝐮𝐫 ou 𝐂𝐨-𝐃𝐢𝐫𝐞𝐜𝐭𝐞𝐮𝐫 pour utiliser cette commande.")
 
 # Solde
 @bot.command(name="solde")
@@ -260,6 +258,36 @@ async def blackjack(ctx, amount: int = None):
         "Clique sur un bouton pour jouer."
     )
     await ctx.send(content=content, view=view)
+
+# --- Nouvelle commande Roulette ---
+@bot.command(name="roulette")
+async def roulette(ctx, mise: int = None, choix: str = None):
+    if mise is None or choix is None:
+        return await ctx.send("🎡 Utilisation : `!roulette <mise> <rouge|noir|0-36>`")
+    if mise < 20000:
+        return await ctx.send("❌ La mise minimale est de 20 000 🪙.")
+    solde = get_balance(ctx.author.id)
+    if mise > solde:
+        return await ctx.send("❌ Tu n'as pas assez de 🪙 pour cette mise.")
+    remove_balance(ctx.author.id, mise)
+    numero = random.randint(0, 36)
+    couleur = "rouge" if numero != 0 and numero % 2 == 1 else "noir" if numero != 0 else "vert"
+    gain = 0
+    choix = choix.lower()
+    if choix in ["rouge", "noir"]:
+        if choix == couleur:
+            gain = mise * 2
+    elif choix.isdigit() and 0 <= int(choix) <= 36:
+        if int(choix) == numero:
+            gain = mise * 36
+    else:
+        add_balance(ctx.author.id, mise)
+        return await ctx.send("❌ Choix invalide. Utilise `rouge`, `noir` ou un nombre entre 0 et 36.")
+    if gain > 0:
+        add_balance(ctx.author.id, gain)
+        await ctx.send(f"🎡 La roulette s'arrête sur **{numero} {couleur}** !\n🎉 Tu gagnes {gain} 🪙 !")
+    else:
+        await ctx.send(f"🎡 La roulette s'arrête sur **{numero} {couleur}**.\n💔 Tu perds ta mise de {mise} 🪙.")
 
 @bot.event
 async def on_ready():
