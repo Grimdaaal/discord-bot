@@ -8,6 +8,7 @@ import requests
 import base64
 from flask import Flask
 from threading import Thread
+import time
 
 # --- Sauvegarde GitHub ---
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
@@ -52,7 +53,7 @@ def mark_for_save():
     global needs_save
     needs_save = True
 
-@tasks.loop(minutes=5)
+@tasks.loop(seconds=20)  # Sauvegarde toutes les 20s
 async def save_task():
     global needs_save
     if needs_save:
@@ -70,7 +71,20 @@ def run_web():
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
 
-Thread(target=run_web).start()
+Thread(target=run_web, daemon=True).start()
+
+# --- Ping automatique pour éviter l'inactivité ---
+def ping_self():
+    while True:
+        try:
+            url = os.environ.get("RENDER_URL", "https://tonbot.onrender.com")
+            requests.get(url)
+            print(f"✅ Keep-alive ping envoyé à {url}")
+        except Exception as e:
+            print(f"⚠️ Erreur keep-alive : {e}")
+        time.sleep(300)  # toutes les 5 min
+
+Thread(target=ping_self, daemon=True).start()
 
 # --- Discord Bot ---
 intents = discord.Intents.default()
@@ -80,7 +94,7 @@ intents.members = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
 def get_balance(user_id):
-    return balances.get(user_id, 100)  # 100 jetons par défaut
+    return balances.get(user_id, 100)
 
 def add_balance(user_id, amount):
     balances[user_id] = get_balance(user_id) + amount
@@ -245,71 +259,20 @@ async def blackjack(ctx, amount: int = None):
     )
     await ctx.send(content=content, view=view)
 
-# Roulette simple
-class RouletteView(View):
-    def __init__(self, ctx, user_id, bet):
-        super().__init__(timeout=120)
-        self.ctx = ctx
-        self.user_id = user_id
-        self.bet = bet
-        self.finished = False
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message("Ce n'est pas ton jeu !", ephemeral=True)
-            return False
-        if self.finished:
-            await interaction.response.send_message("Le jeu est terminé.", ephemeral=True)
-            return False
-        return True
-
-    @discord.ui.button(label="Pair", style=discord.ButtonStyle.blurple)
-    async def pair(self, interaction: discord.Interaction, button: Button):
-        await self.resolve(interaction, 'pair')
-
-    @discord.ui.button(label="Impair", style=discord.ButtonStyle.gray)
-    async def impair(self, interaction: discord.Interaction, button: Button):
-        await self.resolve(interaction, 'impair')
-
-    async def resolve(self, interaction: discord.Interaction, choix: str):
-        result = random.randint(0, 36)
-        result_parity = 'pair' if result != 0 and result % 2 == 0 else 'impair'
-        content = f"🎡 La roulette tourne... Résultat : **{result}**\n"
-
-        if result == 0:
-            content += f"💔 Le zéro sort, tu perds {self.bet} 🪙."
-        elif choix == result_parity:
-            gain = self.bet * 2
-            add_balance(self.user_id, gain)
-            content += f"🎉 Bravo {self.ctx.author.mention}, tu as gagné {gain} 🪙 !"
-        else:
-            content += f"💔 Dommage {self.ctx.author.mention}, tu perds {self.bet} 🪙."
-
-        self.finished = True
-        self.clear_items()
-        await interaction.response.edit_message(content=content, view=None)
-
-@bot.command(name="roulette")
-async def roulette(ctx, amount: int = None):
-    if amount is None or amount <= 0:
-        return await ctx.send("Utilisation : `!roulette <mise>` (mise positive).")
-
-    if get_balance(ctx.author.id) < amount:
-        return await ctx.send("Tu n'as pas assez de 🪙.")
-
-    remove_balance(ctx.author.id, amount)
-    view = RouletteView(ctx, ctx.author.id, amount)
-    await ctx.send(f"🎡 Roulette : mise de {amount} 🪙. Choisis Pair ou Impair :", view=view)
-
 @bot.event
 async def on_ready():
     load_balances()
     save_task.start()
-    print(f"✅ Connecté en tant que {bot.user} ! Sauvegarde toutes les 5 minutes.")
+    print(f"✅ Connecté en tant que {bot.user} ! Sauvegarde toutes les 20 secondes.")
 
 if __name__ == "__main__":
     TOKEN = os.getenv("DISCORD_TOKEN")
     if not TOKEN:
         print("Erreur : variable d'environnement DISCORD_TOKEN non définie.")
     else:
-        bot.run(TOKEN)
+        while True:
+            try:
+                bot.run(TOKEN)
+            except Exception as e:
+                print(f"💥 Erreur bot : {e} — redémarrage dans 5s...")
+                time.sleep(5)
